@@ -45,13 +45,15 @@ RUN git clone --depth=1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg && \
 # Verify
 RUN ffmpeg -hide_banner -encoders | grep -E "svt|aom|x26|opus|vpx|ass" && mediainfo --version
 
+# Install Python dependencies for web server
+RUN pip3 install --no-cache-dir aiohttp
+
 WORKDIR /app
 COPY . .
 
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-EXPOSE 8000
+# Expose multiple ports for flexibility
+EXPOSE 8080 
+
 CMD ["python3", "ravi.py"]
-
-
-
