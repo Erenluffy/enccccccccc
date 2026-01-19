@@ -20647,6 +20647,43 @@ async def send_restart_notification():
         logger.error(f"Restart notification error: {str(e)}")   
 async def main():
     """Main bot entry point with enhanced startup"""
+    
+    # =================== ADD THIS SECTION AT THE BEGINNING ===================
+    # Optional port binding for Render Web Service (won't fail in Background Worker)
+    import os
+    
+    web_runner = None
+    try:
+        # Check if PORT environment variable is set (Render Web Service)
+        port = os.environ.get('PORT')
+        if port:
+            from aiohttp import web
+            
+            # Create simple web server for health checks
+            async def health_check(request):
+                return web.Response(text="Bot is running", status=200)
+            
+            # Setup web app
+            app = web.Application()
+            app.router.add_get('/', health_check)
+            app.router.add_get('/health', health_check)
+            app.router.add_get('/status', health_check)
+            
+            # Start web server in background
+            runner = web.AppRunner(app)
+            await runner.setup()
+            
+            site = web.TCPSite(runner, '0.0.0.0', int(port))
+            await site.start()
+            
+            web_runner = runner  # Save for shutdown
+            logger.info(f"🌐 Web Service mode: Health check server started on port {port}")
+        else:
+            logger.info("🔧 Background Worker mode: No port binding required")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not start web server (running in Background Worker mode): {e}")
+    # =================== END OF ADDED SECTION ===================
+    
     # DECLARE GLOBAL VARIABLES AT THE VERY BEGINNING
     global SUDO_USERS, BOT_AUTHORIZED, BANNED_USERS, TOKEN_ENABLED, TOKEN_DURATION_HOURS
     logger.info("🚀 Starting enhanced video encoder bot...")
@@ -20670,9 +20707,7 @@ async def main():
                 await load_banned_users()  # 🆕 ADD THIS LINE
                 await load_token_system_settings()  # 🆕 ADD THIS LINE
 
-
-
-    # Load storage analytics
+                # Load storage analytics
                 analytics_data = await load_storage_analytics()
                 logger.info(f"📊 Loaded storage analytics: {analytics_data['total_processed']} files processed")
             except ConnectionFailure:
@@ -20739,7 +20774,6 @@ async def main():
      #   asyncio.create_task(queue_health_check())
         logger.info("✅ Queue system initialized with health monitoring")
 
-
         # Keep the bot running
         await idle()
     except Exception as e:
@@ -20752,6 +20786,16 @@ async def main():
     finally:
         logger.info("🛑 Shutting down bot...")
         try:
+            # =================== ADDED SHUTDOWN SECTION ===================
+            # Stop web server if it was started (Web Service mode only)
+            if web_runner:
+                try:
+                    await web_runner.cleanup()
+                    logger.info("🌐 Health check server stopped")
+                except Exception as e:
+                    logger.warning(f"Could not stop web server: {e}")
+            # =================== END OF ADDED SECTION ===================
+            
             # Save settings before shutdown only if MongoDB is available
             if db is not None:
                 await save_sudo_users()
@@ -20759,19 +20803,42 @@ async def main():
                 await save_size_limits()  # Save size limits
                 await save_token_system_settings()  # 🆕 ADD THIS - Save token settings on shutdown
                 logger.info("💾 Settings saved to MongoDB")
+            
             if bot.is_connected:
                 await bot.stop()
-            logger.info("✅ Bot stopped gracefully")
+                logger.info("✅ Bot stopped gracefully")
+                
         except Exception as e:
             logger.error(f"Error during bot shutdown: {e}")
         logger.info("🎯 Bot shutdown complete")
 if __name__ == "__main__":
     logger.info("Starting enhanced video encoder bot...")
+    
+    # Create a new event loop (fixes "different loop" error)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     try:
-        asyncio.run(main())
+        # Run the bot
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
-        logger.info("Received interrupt signal, shutting down...")
+        logger.info("📱 Received interrupt signal, shutting down...")
     except Exception as e:
-        logger.critical(f"Bot failed to start: {str(e)}", exc_info=True)
+        logger.critical(f"💥 Bot failed to start: {str(e)}", exc_info=True)
     finally:
-        logger.info("Bot shutdown complete")
+        # Clean shutdown
+        try:
+            # Cancel all pending tasks
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            if pending:
+                logger.info(f"🔄 Cancelling {len(pending)} pending tasks...")
+                for task in pending:
+                    task.cancel()
+                
+                # Wait for tasks to finish cancellation
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except:
+            pass
+        
+        loop.close()
+        logger.info("✅ Bot shutdown complete")
