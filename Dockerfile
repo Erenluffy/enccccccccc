@@ -51,4 +51,5 @@ COPY . .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 EXPOSE 6800
-CMD ["python3", "bot.py"]
+CMD ["python3", "final.py"]
+
